@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "tasks")
 data class Task(
-    @PrimaryKey val id: Int = 0,
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
     var guid: String? = null,
     val date: String,
     val counteragent: String,
@@ -14,12 +14,10 @@ data class Task(
     val auto: String,
     val contacts: String,
     val description: String,
-    var comment: String? = "null",
-    var photos: List<Photo> = emptyList(),
+    var comment: String? = null,
     val isSynchronized: Long,
     val createdAt: Long,
     val updatedAt: Long? = null,
     var report: String? = null,
     var isCompleted: Boolean = false
-
 )

@@ -13,15 +13,10 @@ import java.lang.reflect.Type
 
 object GsonProvider {
 
-    private val gson: Gson by lazy {
-        GsonBuilder()
-            .registerTypeAdapter(Uri::class.java, UriAdapter())
-            .create()
-    }
-
-    fun getGson(): Gson {
-        return gson
-    }
+    // Direct initialization to ensure a single, consistent instance across all threads.
+    val gson: Gson = GsonBuilder()
+        .registerTypeAdapter(Uri::class.java, UriAdapter())
+        .create()
 }
 
 private class UriAdapter : JsonSerializer<Uri>, JsonDeserializer<Uri> {

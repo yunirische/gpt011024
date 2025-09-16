@@ -5,10 +5,10 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 @Database(entities = [Task::class, Photo::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
-@TypeConverters(Converters::class) // Добавим конвертер для URI
+@TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
     abstract fun photoDao(): PhotoDao

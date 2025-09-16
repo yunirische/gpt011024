@@ -3,91 +3,77 @@ package com.example.gpt011024
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.gpt011024.ui.theme.Gpt011024Theme
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installSplashScreen()
 
         setContent {
+            val coroutineScope = rememberCoroutineScope()
             val database = DatabaseProvider.getDatabase(applicationContext)
             val taskDao = database.taskDao()
 
-            val taskList = remember { mutableStateOf(listOf<Task>()) }
+            val tasksWithPhotos by taskDao.getTasksWithPhotos().collectAsState(initial = emptyList())
 
             LaunchedEffect(Unit) {
-                GlobalScope.launch(Dispatchers.IO) {
-                    val tasks = taskDao.getAllTasks()
-                    Log.d("MainActivity", "Tasks in DB: $tasks")
-
-                    if (tasks.isEmpty()) {
+                coroutineScope.launch(Dispatchers.IO) {
+                    if (taskDao.getTasksWithPhotos().first().isEmpty()) {
                         val tasksFromJson = loadTaskFromJson(applicationContext)
-
-                        Log.d("MainActivity", "Loaded from JSON: $tasksFromJson")
                         taskDao.insertAll(tasksFromJson)
-                        taskList.value = taskDao.getAllTasks()
-                    } else {
-                        taskList.value = tasks
                     }
                 }
             }
-
 
             val navController = rememberNavController()
 
             Gpt011024Theme {
                 NavHost(
                     navController = navController,
-                    startDestination = "task_list"
+                    startDestination = "login"
                 ) {
+                    composable("login") {
+                        LoginScreen(navController = navController)
+                    }
+
                     composable("task_list") {
                         TaskListScreen(
-                            tasks = taskList.value,
+                            tasksWithPhotos = tasksWithPhotos,
                             onTaskClick = { taskId ->
                                 navController.navigate("task_detail/$taskId")
                             },
                             onTaskDelete = { taskId ->
-                                GlobalScope.launch(Dispatchers.IO) {
-                                    taskDao.delete(taskDao.getById(taskId)!!)
-                                    taskList.value = taskDao.getAllTasks()
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    taskDao.getById(taskId)?.let { taskToDelete ->
+                                        taskDao.delete(taskToDelete)
+                                    }
                                 }
                             }
                         )
                     }
 
-                    composable("task_detail/{taskId}") { navBackStackEntry ->
-                        val taskId =
-                            navBackStackEntry.arguments?.getString("taskId")?.toIntOrNull()
-                        val task = taskList.value.find { it.id == taskId }
-
-                        if (task != null) {
-                            TaskDetailScreen(
-                                task = task,
-                                navController = navController,
-                                context = applicationContext,
-                                onSaveClick = {/* todo: implement save logic */ }
-                            )
-                        } else {
-                            Text("Task not found")
-
-
-                        }
-
+                    composable(
+                        route = "task_detail/{taskId}",
+                        arguments = listOf(navArgument("taskId") { type = NavType.IntType })
+                    ) {
+                        TaskDetailScreen(navController = navController)
                     }
                 }
-
             }
         }
     }

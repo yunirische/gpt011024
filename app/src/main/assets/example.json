@@ -25,7 +25,7 @@
       "contacts": "janedoe@example.com",
       "description": "Brake pad replacement",
       "createdAt": 1641081600,
-      "report": "",
+      "report": "Checked the brake pads. All are worn out. Replaced with new ones. Took 45 minutes.",
       "photos": []
     },
     {
@@ -40,7 +40,15 @@
       "description": "Engine tune-up",
       "createdAt": 1641772800,
       "report": "",
-      "photos": []
+      "photos": [
+        {
+          "id": 101,
+          "taskId": 3,
+          "uri": "content://media/external/images/media/1",
+          "description": "Old engine part",
+          "order": 1
+        }
+      ]
     },
     {
       "id": 4,
@@ -53,8 +61,23 @@
       "contacts": "bobwilliams@example.com",
       "description": "Transmission repair",
       "createdAt": 1641859200,
-      "report": "",
-      "photos": []
+      "report": "Client reported grinding noises. Found a worn out gear. Replaced the gear and refilled transmission fluid.",
+      "photos": [
+        {
+          "id": 102,
+          "taskId": 4,
+          "uri": "content://media/external/images/media/2",
+          "description": "Worn out gear",
+          "order": 1
+        },
+        {
+          "id": 103,
+          "taskId": 4,
+          "uri": "content://media/external/images/media/3",
+          "description": "New gear installed",
+          "order": 2
+        }
+      ]
     },
     {
       "id": 5,

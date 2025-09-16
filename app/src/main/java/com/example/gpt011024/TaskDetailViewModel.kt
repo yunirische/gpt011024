@@ -24,7 +24,7 @@ data class TaskDetailUiState(
     val reportText: String = "",
     val isSaving: Boolean = false,
     val hasUnsavedChanges: Boolean = false,
-    val initialPhotos: List<Photo>? = null // Для отслеживания изменений
+    val newlyAddedPhotos: List<Photo> = emptyList() // Временное хранилище для новых фото
 )
 
 // Класс для "одноразовых" событий (показать Toast, перейти назад)
@@ -49,57 +49,65 @@ class TaskDetailViewModel(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
+            // 1. Загружаем задачу и инициализируем состояние один раз
             val task = taskDao.getById(taskId)
-            val photos = photoDao.getPhotosForTask(taskId).first()
             _uiState.update {
                 it.copy(
                     task = task,
-                    photos = photos,
-                    reportText = task?.report ?: "",
-                    initialPhotos = photos
+                    reportText = task?.report ?: ""
                 )
             }
-            // Начинаем отслеживать изменения после начальной загрузки
-            observeChanges()
-        }
-    }
 
-    private fun observeChanges() {
-        viewModelScope.launch {
-            // Комбинируем поток фотографий и текущее состояние UI
-            combine(photoDao.getPhotosForTask(taskId), _uiState) { photos, state ->
-                val photosChanged = photos.map { it.uri.toString() }.sorted() != state.initialPhotos?.map { it.uri.toString() }?.sorted()
-                val reportChanged = state.reportText != (state.task?.report ?: "")
-
-                _uiState.update {
-                    it.copy(
-                        photos = photos,
-                        hasUnsavedChanges = photosChanged || reportChanged
+            // 2. Начинаем наблюдать за изменениями фотографий в БД
+            photoDao.getPhotosForTask(taskId).collect { photosFromDb ->
+                _uiState.update { currentState ->
+                    val reportChanged = currentState.reportText != (task?.report ?: "")
+                    val newPhotosAdded = currentState.newlyAddedPhotos.isNotEmpty()
+                    currentState.copy(
+                        photos = photosFromDb + currentState.newlyAddedPhotos, // Показываем объединенный список
+                        hasUnsavedChanges = reportChanged || newPhotosAdded
                     )
                 }
-            }.collect { /* Просто собираем поток, чтобы он работал */ }
+            }
         }
     }
 
     fun onReportTextChanged(text: String) {
-        _uiState.update { it.copy(reportText = text) }
+        _uiState.update {
+            val reportChanged = text != (it.task?.report ?: "")
+            val newPhotosAdded = it.newlyAddedPhotos.isNotEmpty()
+            it.copy(reportText = text, hasUnsavedChanges = reportChanged || newPhotosAdded)
+        }
     }
 
     fun addPhoto(uri: Uri, description: String, context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Получаем постоянное разрешение на доступ к файлу
-                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+                // Вызываем takePersistableUriPermission только если URI не от нашего FileProvider
+                val fileProviderAuthority = "${context.packageName}.fileprovider"
+                if (uri.authority != fileProviderAuthority) {
+                    val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+                }
 
-                if (_uiState.value.photos.any { it.uri == uri }) {
+                if (uiState.value.photos.any { it.uri == uri }) {
                     _effect.emit(UiEffect.ShowToast("Это фото уже добавлено"))
                     return@launch
                 }
 
-                val maxOrder = _uiState.value.photos.maxOfOrNull { it.order } ?: 0
+                val maxOrder = uiState.value.photos.maxOfOrNull { it.order } ?: 0
                 val newPhoto = Photo(taskId = taskId, uri = uri, description = description, order = maxOrder + 1)
-                photoDao.insertPhoto(newPhoto)
+
+                // НЕ сохраняем в БД, а добавляем во временный список в состоянии
+                _uiState.update {
+                    val updatedNewPhotos = it.newlyAddedPhotos + newPhoto
+                    it.copy(
+                        newlyAddedPhotos = updatedNewPhotos,
+                        photos = it.photos + newPhoto, // ОБНОВЛЯЕМ ОСНОВНОЙ СПИСОК
+                        hasUnsavedChanges = true
+                    )
+                }
+
                 _effect.emit(UiEffect.ShowToast("Фото добавлено"))
             } catch (e: Exception) {
                 Log.e("ViewModel", "Error adding photo: ${e.message}", e)
@@ -109,9 +117,22 @@ class TaskDetailViewModel(
     }
 
     fun deletePhoto(photo: Photo) {
-        viewModelScope.launch(Dispatchers.IO) {
-            photoDao.deletePhoto(photo)
-            _effect.emit(UiEffect.ShowToast("Фото удалено"))
+        // Если у фото id=0, значит оно еще не сохранено в БД (новое)
+        if (photo.id.toLong() == 0L) {
+            _uiState.update { currentState ->
+                val updatedNewPhotos = currentState.newlyAddedPhotos.filterNot { p -> p.uri == photo.uri }
+                val reportChanged = currentState.reportText != (currentState.task?.report ?: "")
+                currentState.copy(
+                    newlyAddedPhotos = updatedNewPhotos,
+                    photos = currentState.photos.filterNot { p -> p.uri == photo.uri }, // ОБНОВЛЯЕМ ОСНОВНОЙ СПИСОК
+                    hasUnsavedChanges = reportChanged || updatedNewPhotos.isNotEmpty()
+                )
+            }
+        } else { // Иначе удаляем из БД
+            viewModelScope.launch(Dispatchers.IO) {
+                photoDao.deletePhoto(photo)
+                _effect.emit(UiEffect.ShowToast("Фото удалено"))
+            }
         }
     }
 
@@ -120,11 +141,23 @@ class TaskDetailViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val currentState = _uiState.value
+
+                // 1. Сохраняем новые фотографии в базу данных
+                if (currentState.newlyAddedPhotos.isNotEmpty()) {
+                    val newIds = photoDao.insertPhotos(currentState.newlyAddedPhotos)
+                    if (newIds.isNotEmpty()) {
+                        // Очищаем временный список, так как фото теперь в БД
+                        // и будут получены через основной Flow в init {}
+                        _uiState.update { it.copy(newlyAddedPhotos = emptyList()) }
+                    }
+                }
+
                 currentState.task?.let {
-                    val updatedTask = it.copy(report = currentState.reportText)
+                    // 2. Обновляем отчет в задаче
+                    val updatedTask = it.copy(report = currentState.reportText.trim())
                     taskDao.update(updatedTask)
                     _effect.emit(UiEffect.ShowToast("Задача сохранена"))
-                    _effect.emit(UiEffect.NavigateBack) // Сигнал для навигации назад
+                    _effect.emit(UiEffect.NavigateBack)
                 }
             } catch (e: Exception) {
                 Log.e("ViewModel", "Error saving task: ${e.message}", e)
